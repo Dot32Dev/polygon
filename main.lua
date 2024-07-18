@@ -17,6 +17,8 @@ function love.mousepressed(b)
 end
 
 function love.draw() 
+    love.graphics.setColor(0, 1, 0)
+
     for _, polygon in ipairs(objects) do
         local vertices = {}
         for _, point in ipairs(polygon) do
@@ -29,31 +31,46 @@ function love.draw()
     if love.keyboard.isDown("space") then 
         love.graphics.print(varToString(objects))
     end
-
-    love.graphics.setColor(0, 1, 0)
-    
-    for i=2, #objects do
-            -- Run SAT collision detection on objects[1] and objects[i]
-        if seperating_axis_theorem(objects[1], objects[i]) then
-            love.graphics.print("Intersecting!")
-            love.graphics.setColor(1, 0, 0)
-        end
-    end
 end
 
 function love.update() 
     if objects[1] then
-        objects[1].x = love.mouse.getX()
-        objects[1].y = love.mouse.getY()
+        -- objects[1].x = love.mouse.getX()
+        -- objects[1].y = love.mouse.getY()
+        if love.keyboard.isDown("left") then
+            objects[1].x = objects[1].x - 5
+        end
+        if love.keyboard.isDown("right") then
+            objects[1].x = objects[1].x + 5
+        end
+        if love.keyboard.isDown("up") then
+            objects[1].y = objects[1].y - 5
+        end
+        if love.keyboard.isDown("down") then
+            objects[1].y = objects[1].y + 5
+        end
+    end
+
+    for i=2, #objects do
+        -- Run SAT collision detection on objects[1] and objects[i]
+        local bool, dist, dir = seperating_axis_theorem(objects[1], objects[i])
+        if bool then
+            love.graphics.print("Intersecting!")
+            -- love.graphics.setColor(1, 0, 0)
+            objects[1].x = objects[1].x + dist * dir.x
+            objects[1].y = objects[1].y + dist * dir.y
+        end
     end
 end
 
 function seperating_axis_theorem(object1, object2) 
     -- Get all the axes to test
     local axes = {}
-    getAxes(axes, object1)
+    getAxes(axes, object1, true)
     getAxes(axes, object2)
 
+    local min_overlap = nil
+    local smallest_axis = nil
     for i, axis in ipairs(axes) do
         -- Project each polygon onto the axix
         local proj1 = project(object1, axis)
@@ -62,20 +79,36 @@ function seperating_axis_theorem(object1, object2)
         -- love.graphics.line(proj1.min + 200, i*10 + 100, proj1.max + 200, i*10 + 100)
         -- love.graphics.line(proj2.min + 200, i*10 + 100, proj2.max + 200, i*10 + 100)
 
-        if not overlaps(proj1, proj2) then
+        local overlap = overlaps(proj1, proj2)
+        if min_overlap == nil or overlap < min_overlap then
+            min_overlap = overlap
+            smallest_axis = i
+        end
+        if overlap == 0 then
             return false
         end
     end
 
-    return true
+    print(min_overlap)
+    return true, min_overlap, axes[smallest_axis]
 end
 
-function getAxes(axes, object)
+function getAxes(axes, object, flip)
     for i, vertex in ipairs(object) do
         local next_vertex = object[i + 1] or object[1]
+        
+        local edge = {}
+        edge.x = vertex.x - next_vertex.x
+        edge.y = vertex.y - next_vertex.y
+
         local normal = {}
-        normal.x = - (vertex.y - next_vertex.y)
-        normal.y = vertex.x - next_vertex.x
+        normal.x = - edge.y
+        normal.y = edge.x
+
+        if flip then
+            normal.x = edge.y
+            normal.y = - edge.x
+        end
 
         normal = normalise(normal)
 
@@ -113,5 +146,13 @@ function project(object, axis)
 end
 
 function overlaps(proj1, proj2)
-    return proj1.max > proj2.min and proj1.min < proj2.max
+    -- return proj1.max > proj2.min and proj1.min < proj2.max
+
+    if proj1.max > proj2.min and proj1.min < proj2.max then
+        local overlap_start = math.max(proj1.min, proj2.min)
+        local overlap_end = math.min(proj1.max, proj2.max)
+        return overlap_end - overlap_start
+    else
+        return 0
+    end
 end
