@@ -3,22 +3,37 @@ varToString = require("print_table")
 
 local objects = {}
 
-function love.mousepressed(b)
+-- Spawn an object in the center when you click
+function love.mousepressed()
     local polygon = generateRandomConvexPolygon(10)
     polygon.x = 400
     polygon.y = 300
+    polygon.average = {x=0, y=0}
 
     local size = 100
     for _, point in ipairs(polygon) do
         point.x = point.x*size-size/2
         point.y = point.y*size-size/2
+
+        polygon.average.x = polygon.average.x + point.x
+        polygon.average.y = polygon.average.y + point.y
     end
+
+    polygon.average.x = polygon.average.x / #polygon
+    polygon.average.y = polygon.average.y / #polygon
+
+    polygon.properties = polygon_centroid
+    polygon:properties()
+
     table.insert(objects, 1, polygon)
 end
 
 function love.draw() 
     love.graphics.setColor(0, 1, 0)
 
+    -- love.shmupdate()
+
+    -- Gotta convert the list of {{x=, y=}...} to a list of {x1,y1,x2,y2...}
     for _, polygon in ipairs(objects) do
         local vertices = {}
         for _, point in ipairs(polygon) do
@@ -26,14 +41,39 @@ function love.draw()
             table.insert(vertices, point.y + polygon.y)
         end
         love.graphics.polygon("line", vertices)
+
+        love.graphics.setColor(0, 0, 1)
+        love.graphics.circle(
+            "line", 
+            polygon.x, 
+            polygon.y, 
+            5
+        )
+        love.graphics.setColor(1, 0, 0)
+        love.graphics.circle(
+            "line", 
+            polygon.x + polygon.average.x, 
+            polygon.y + polygon.average.y, 
+            5
+        )
+        love.graphics.setColor(0, 1, 0)
+
+        love.graphics.circle(
+            "line", 
+            polygon.x + polygon.center.x, 
+            polygon.y + polygon.center.y, 
+            5
+        )
     end
 
+    -- Print debug when pressing space
     if love.keyboard.isDown("space") then 
         love.graphics.print(varToString(objects))
     end
 end
 
 function love.update() 
+    -- If there is at least one object, move the first object around 
     if objects[1] then
         -- objects[1].x = love.mouse.getX()
         -- objects[1].y = love.mouse.getY()
@@ -55,10 +95,14 @@ function love.update()
         -- Run SAT collision detection on objects[1] and objects[i]
         local bool, dist, dir = seperating_axis_theorem(objects[1], objects[i])
         if bool then
-            love.graphics.print("Intersecting!")
+            -- -- printing in update, very clever 
+            -- love.graphics.print("Intersecting!")
             -- love.graphics.setColor(1, 0, 0)
-            objects[1].x = objects[1].x + dist * dir.x
-            objects[1].y = objects[1].y + dist * dir.y
+            objects[1].x = objects[1].x + dist/1 * dir.x
+            objects[1].y = objects[1].y + dist/1 * dir.y
+
+            -- objects[i].x = objects[i].x + dist/-2 * dir.x
+            -- objects[i].y = objects[i].y + dist/-2 * dir.y
         end
     end
 end
@@ -69,6 +113,7 @@ function seperating_axis_theorem(object1, object2)
     getAxes(axes, object1, true)
     getAxes(axes, object2)
 
+    -- The axis with the least overlap is the axis we gotta move out from!
     local min_overlap = nil
     local smallest_axis = nil
     for i, axis in ipairs(axes) do
@@ -76,14 +121,17 @@ function seperating_axis_theorem(object1, object2)
         local proj1 = project(object1, axis)
         local proj2 = project(object2, axis)
 
-        -- love.graphics.line(proj1.min + 200, i*10 + 100, proj1.max + 200, i*10 + 100)
-        -- love.graphics.line(proj2.min + 200, i*10 + 100, proj2.max + 200, i*10 + 100)
+        -- -- Debug projections
+        -- love.graphics.line(proj1.min + 300, i*10 + 100, proj1.max + 300, i*10 + 100)
+        -- love.graphics.line(proj2.min + 300, i*10 + 100, proj2.max + 300, i*10 + 100)
 
         local overlap = overlaps(proj1, proj2)
         if min_overlap == nil or overlap < min_overlap then
             min_overlap = overlap
             smallest_axis = i
         end
+        -- If there is an axis in which the shapes do not overlap, they are not
+        -- intersecting
         if overlap == 0 then
             return false
         end
@@ -102,16 +150,18 @@ function getAxes(axes, object, flip)
         edge.y = vertex.y - next_vertex.y
 
         local normal = {}
-        normal.x = - edge.y
-        normal.y = edge.x
 
         if flip then
             normal.x = edge.y
             normal.y = - edge.x
+        else 
+            normal.x = - edge.y
+            normal.y = edge.x
         end
 
         normal = normalise(normal)
 
+        -- -- Debug the normals
         -- love.graphics.setColor(1, 0, 0)
         -- love.graphics.line(object.x + vertex.x, object.y + vertex.y, object.x + vertex.x + normal.x*20, object.y + vertex.y + normal.y*20)
         -- love.graphics.setColor(0, 1, 0)
@@ -155,4 +205,36 @@ function overlaps(proj1, proj2)
     else
         return 0
     end
+end
+
+-- Written by Mr Chat Gippity
+-- Extended to not only calculate the center, but also the area, mass, & inertia
+function polygon_centroid(self)
+    local n = #self
+    self.area = 0      -- Signed self.area of the polygon
+    self.center = {x=0, y=0}
+    self.density = 1
+    self.inertia = 0
+
+    for i = 1, n do
+        local x0, y0 = self[i].x, self[i].y
+        local x1, y1 = self[(i % n) + 1].x, self[(i % n) + 1].y
+        local cross_product = x0 * y1 - x1 * y0
+        self.area = self.area + cross_product
+
+        self.center.x = self.center.x + (x0 + x1) * cross_product
+        self.center.y = self.center.y + (y0 + y1) * cross_product
+
+        local factor = (x0^2 + x0 * x1 + x1^2 + y0^2 + y0 * y1 + y1^2)
+        self.inertia = self.inertia + cross_product * factor
+    end
+
+    self.area = math.abs(self.area * 0.5)
+
+    local mass = self.area * self.density
+
+    self.inertia = self.density / 12 * math.abs(self.inertia)
+
+    self.center.x = self.center.x / (6 * self.area)
+    self.center.y = self.center.y / (6 * self.area)
 end
