@@ -9,6 +9,9 @@ function love.mousepressed()
     polygon.x = 400
     polygon.y = 300
     polygon.average = {x=0, y=0}
+    polygon.velocity = {x=0, y=0}
+    polygon.angle = 0
+    polygon.angular_velocity = 0
 
     local size = 100
     for _, point in ipairs(polygon) do
@@ -25,43 +28,49 @@ function love.mousepressed()
     polygon.properties = polygon_centroid
     polygon:properties()
 
+    polygon.shift = recenter_object
+    polygon:shift(polygon.center)
+
+    -- Convert to a different format compatible with newMesh()
+    local vertices = {}
+    for _, vertex in ipairs(polygon) do
+        table.insert(vertices, {vertex.x, vertex.y})
+    end
+
+    polygon.mesh = love.graphics.newMesh(vertices, "fan", "static")
+
     table.insert(objects, 1, polygon)
 end
 
 function love.draw() 
-    love.graphics.setColor(0, 1, 0)
 
     -- love.shmupdate()
 
     -- Gotta convert the list of {{x=, y=}...} to a list of {x1,y1,x2,y2...}
-    for _, polygon in ipairs(objects) do
-        local vertices = {}
-        for _, point in ipairs(polygon) do
-            table.insert(vertices, point.x + polygon.x)
-            table.insert(vertices, point.y + polygon.y)
-        end
-        love.graphics.polygon("line", vertices)
+    for _, object in ipairs(objects) do
+        love.graphics.setColor(0.1, 0.5, 0.5)
+        love.graphics.draw(object.mesh, object.x, object.y)
 
         love.graphics.setColor(0, 0, 1)
         love.graphics.circle(
             "line", 
-            polygon.x, 
-            polygon.y, 
+            object.x, 
+            object.y, 
             5
         )
         love.graphics.setColor(1, 0, 0)
         love.graphics.circle(
             "line", 
-            polygon.x + polygon.average.x, 
-            polygon.y + polygon.average.y, 
+            object.x + object.average.x, 
+            object.y + object.average.y, 
             5
         )
         love.graphics.setColor(0, 1, 0)
 
         love.graphics.circle(
             "line", 
-            polygon.x + polygon.center.x, 
-            polygon.y + polygon.center.y, 
+            object.x + object.center.x, 
+            object.y + object.center.y, 
             5
         )
     end
@@ -78,16 +87,20 @@ function love.update()
         -- objects[1].x = love.mouse.getX()
         -- objects[1].y = love.mouse.getY()
         if love.keyboard.isDown("left") then
-            objects[1].x = objects[1].x - 5
+            -- objects[1].x = objects[1].x - 5
+            apply_impulse(objects[1], {x = -350,y =  0}, objects[1].center)
         end
         if love.keyboard.isDown("right") then
-            objects[1].x = objects[1].x + 5
+            -- objects[1].x = objects[1].x + 5
+            apply_impulse(objects[1], {x = 350, y = 0}, objects[1].center)
         end
         if love.keyboard.isDown("up") then
-            objects[1].y = objects[1].y - 5
+            -- objects[1].y = objects[1].y - 5
+            apply_impulse(objects[1], {x = 0, y = -350}, objects[1].center)
         end
         if love.keyboard.isDown("down") then
-            objects[1].y = objects[1].y + 5
+            -- objects[1].y = objects[1].y + 5
+            apply_impulse(objects[1], {x = 0, y = 350}, objects[1].center)
         end
     end
 
@@ -104,6 +117,16 @@ function love.update()
             -- objects[i].x = objects[i].x + dist/-2 * dir.x
             -- objects[i].y = objects[i].y + dist/-2 * dir.y
         end
+    end
+
+    for i, object in ipairs(objects) do
+        object.x = object.x + object.velocity.x
+        object.y = object.y + object.velocity.y
+        object.angle = object.angle + object.angular_velocity
+
+        object.velocity.x = object.velocity.x * 0.95
+        object.velocity.y = object.velocity.y * 0.95
+        object.angular_velocity = object.angular_velocity * 0.95
     end
 end
 
@@ -137,7 +160,7 @@ function seperating_axis_theorem(object1, object2)
         end
     end
 
-    print(min_overlap)
+    -- print(min_overlap)
     return true, min_overlap, axes[smallest_axis]
 end
 
@@ -210,31 +233,69 @@ end
 -- Written by Mr Chat Gippity
 -- Extended to not only calculate the center, but also the area, mass, & inertia
 function polygon_centroid(self)
-    local n = #self
-    self.area = 0      -- Signed self.area of the polygon
+    self.area = 0
     self.center = {x=0, y=0}
     self.density = 1
     self.inertia = 0
 
-    for i = 1, n do
-        local x0, y0 = self[i].x, self[i].y
-        local x1, y1 = self[(i % n) + 1].x, self[(i % n) + 1].y
-        local cross_product = x0 * y1 - x1 * y0
-        self.area = self.area + cross_product
+    for i = 1, #self do
+        local vertex = self[i]
+        local next_vertex = self[i + 1] or self[1]
+        local cross = cross_product_2d(vertex, next_vertex)
 
-        self.center.x = self.center.x + (x0 + x1) * cross_product
-        self.center.y = self.center.y + (y0 + y1) * cross_product
+        self.area = self.area + cross
 
-        local factor = (x0^2 + x0 * x1 + x1^2 + y0^2 + y0 * y1 + y1^2)
-        self.inertia = self.inertia + cross_product * factor
+        self.center.x = self.center.x + (vertex.x + next_vertex.x) * cross
+        self.center.y = self.center.y + (vertex.y + next_vertex.y) * cross
+
+        local factor = 
+            vertex.x^2 + vertex.x * next_vertex.x + next_vertex.x^2
+            + vertex.y^2 + vertex.y * next_vertex.y + next_vertex.y^2
+
+        self.inertia = self.inertia + cross * factor
     end
 
     self.area = math.abs(self.area * 0.5)
 
-    local mass = self.area * self.density
+    self.mass = self.area * self.density
 
     self.inertia = self.density / 12 * math.abs(self.inertia)
 
     self.center.x = self.center.x / (6 * self.area)
     self.center.y = self.center.y / (6 * self.area)
+end
+
+function cross_product_2d(a, b)
+    return a.x * b.y - a.y * b.x
+end
+
+function apply_impulse(object, impulse, contact_point) 
+    -- Calculate r, the offset from the contact point to the center of mass
+    local r = {
+        x = contact_point.x - object.center.x, 
+        y = contact_point.y - object.center.y
+    }
+
+    -- Calculate change in linear velocity
+    object.velocity.x = object.velocity.x + impulse.x / object.mass
+    object.velocity.y = object.velocity.y + impulse.y / object.mass
+
+    -- Calculate torque with cross product (r_x * J_y - r_y * J_x)
+    local torque = cross_product_2d(r, impulse)
+
+    -- Calculate change to angular velocity
+    object.angular_velocity = object.angular_velocity + torque / object.inertia
+end
+
+function recenter_object(self, shift)
+    for _, vertex in ipairs(self) do
+        vertex.x = vertex.x - shift.x
+        vertex.y = vertex.y - shift.y
+    end
+
+    self.center.x = self.center.x - shift.x
+    self.center.y = self.center.y - shift.y
+
+    self.average.x = self.average.x - shift.x
+    self.average.y = self.average.y - shift.y
 end
